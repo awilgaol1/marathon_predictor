@@ -1,203 +1,172 @@
 """
-LLM-based data extractor with Langfuse integration.
-Extracts structured data from user's natural language input.
+LLM Data Extractor with Langfuse monitoring
+Wydobywa dane biegacza z naturalnego języka polskiego
 """
+import os
 import json
-import logging
-from typing import Dict, Optional, List
+import streamlit as st
 from openai import OpenAI
-from langfuse import Langfuse
-from langfuse.decorators import observe, langfuse_context
-import config
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Langfuse - import z try/except dla bezpieczeństwa
+try:
+    from langfuse import Langfuse
+    LANGFUSE_AVAILABLE = True
+except ImportError:
+    LANGFUSE_AVAILABLE = False
+    print("Warning: Langfuse not available")
 
-
-class DataExtractor:
-    """Extract structured data from natural language using LLM."""
-    
-    def __init__(self):
-        """Initialize OpenAI client and Langfuse."""
-        self.client = OpenAI(api_key=config.OPENAI_API_KEY)
-        
-        # Initialize Langfuse
-        if config.LANGFUSE_PUBLIC_KEY and config.LANGFUSE_SECRET_KEY:
-            self.langfuse = Langfuse(
-                public_key=config.LANGFUSE_PUBLIC_KEY,
-                secret_key=config.LANGFUSE_SECRET_KEY,
-                host=config.LANGFUSE_HOST,
-            )
-        else:
-            self.langfuse = None
-            logger.warning("Langfuse not configured. Metrics will not be collected.")
-    
-    @observe(as_type="generation")
-    def extract_data(self, user_input: str) -> Dict:
-        """
-        Extract structured data from user input.
-        
-        Args:
-            user_input: Natural language input from user
-            
-        Returns:
-            Dictionary with extracted data and validation info
-        """
-        system_prompt = """Jesteś asystentem do ekstrakcji danych o biegaczach. 
-Twoim zadaniem jest wydobyć z tekstu użytkownika następujące informacje:
-- płeć (gender): "M" dla mężczyzn, "K" dla kobiet
-- wiek (age): liczba całkowita
-- czas na 5km (time_5km): w formacie MM:SS lub HH:MM:SS
-
-Odpowiedz TYLKO w formacie JSON z następującą strukturą:
-{
-    "gender": "M" lub "K" lub null,
-    "age": liczba lub null,
-    "time_5km": "MM:SS" lub null,
-    "missing_fields": lista brakujących pól,
-    "confidence": "high" lub "medium" lub "low"
-}
-
-Przykłady:
-- "Jestem 30-letnim mężczyzną, 5km biegnę w 22:30" -> {"gender": "M", "age": 30, "time_5km": "22:30", "missing_fields": [], "confidence": "high"}
-- "Kobieta, 25 lat" -> {"gender": "K", "age": 25, "time_5km": null, "missing_fields": ["time_5km"], "confidence": "high"}
-- "Biegnę 5km w 20 minut" -> {"gender": null, "age": null, "time_5km": "20:00", "missing_fields": ["gender", "age"], "confidence": "medium"}
+SYSTEM_PROMPT = """Jesteś ekstraktor danych dla aplikacji biegowej.
+Z tekstu użytkownika wydobądź:
+  - gender  : "M" (mężczyzna) lub "K" (kobieta) lub null
+  - age     : liczba całkowita (wiek w latach) lub null
+  - time_5km: czas w formacie "MM:SS" lub null
 
 Zasady:
-1. Jeśli informacja nie jest podana, użyj null
-2. Wiek możesz wyliczyć z roku urodzenia (odejmij od 2024)
-3. Płeć możesz wywnioskować z form gramatycznych (jestem, biegnę itp.)
-4. Czas może być podany w różnych formatach - normalizuj do MM:SS
-5. Lista missing_fields powinna zawierać tylko te pola, których nie udało się wydobyć
-6. Confidence: high jeśli dane są jasno podane, medium jeśli wywnioskowałeś, low jeśli niepewny
+- Wiek możesz wyliczyć z roku urodzenia (odejmij od 2024)
+- Płeć wnioskuj z form gramatycznych / słów kluczowych
+- Czas może być podany jako "22 minuty", "22:30", "22 min 30 sek" – znormalizuj do MM:SS
+- Jeśli nie jesteś w stanie wydobyć wartości, użyj null
+- Odpowiedz TYLKO i WYŁĄCZNIE poprawnym JSON, bez żadnego komentarza
+
+Przykłady:
+  "30-letni mężczyzna, 5km w 22:30"
+  -> {"gender":"M","age":30,"time_5km":"22:30"}
+
+  "kobieta, rocznik 1990, pięciokę biegam w 25 minut"
+  -> {"gender":"K","age":34,"time_5km":"25:00"}
+
+  "facet 45 lat"
+  -> {"gender":"M","age":45,"time_5km":null}
 """
 
-        try:
-            # Call OpenAI API with Langfuse observation
-            response = self.client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_input}
-                ],
-                temperature=0.1,
-                response_format={"type": "json_object"}
-            )
-            
-            # Extract and parse response
-            result = json.loads(response.choices[0].message.content)
-            
-            # Log to Langfuse
-            if self.langfuse:
-                langfuse_context.update_current_observation(
-                    input=user_input,
-                    output=result,
-                    metadata={
-                        "model": "gpt-4o-mini",
-                        "missing_fields": result.get("missing_fields", []),
-                        "confidence": result.get("confidence", "unknown")
-                    }
-                )
-            
-            logger.info(f"Successfully extracted data: {result}")
-            return result
-            
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse JSON response: {e}")
-            return self._get_empty_result(["gender", "age", "time_5km"])
-            
-        except Exception as e:
-            logger.error(f"Error in data extraction: {e}")
-            return self._get_empty_result(["gender", "age", "time_5km"])
-    
-    def _get_empty_result(self, missing_fields: List[str]) -> Dict:
-        """Return an empty result with all fields missing."""
-        return {
-            "gender": None,
-            "age": None,
-            "time_5km": None,
-            "missing_fields": missing_fields,
-            "confidence": "low"
-        }
-    
-    def validate_extracted_data(self, data: Dict) -> Dict:
-        """
-        Validate extracted data and provide user-friendly messages.
-        
-        Args:
-            data: Extracted data dictionary
-            
-        Returns:
-            Dictionary with validation results
-        """
-        missing = data.get("missing_fields", [])
-        
-        if not missing:
-            return {
-                "is_valid": True,
-                "message": "Wszystkie dane zostały pomyślnie wydobyte!",
-                "missing_fields": []
-            }
-        
-        # Create user-friendly message
-        field_names = {
-            "gender": "płeć",
-            "age": "wiek",
-            "time_5km": "czas na 5km"
-        }
-        
-        missing_names = [field_names.get(field, field) for field in missing]
-        message = f"Brakuje następujących danych: {', '.join(missing_names)}. "
-        message += "Proszę podać te informacje, aby otrzymać prognozę."
-        
-        return {
-            "is_valid": False,
-            "message": message,
-            "missing_fields": missing
-        }
-    
-    def convert_time_to_seconds(self, time_str: str) -> Optional[int]:
-        """
-        Convert time string (MM:SS or HH:MM:SS) to seconds.
-        
-        Args:
-            time_str: Time in format MM:SS or HH:MM:SS
-            
-        Returns:
-            Time in seconds or None if invalid
-        """
-        if not time_str:
-            return None
-            
-        try:
-            parts = time_str.split(":")
-            if len(parts) == 2:  # MM:SS
-                minutes, seconds = map(int, parts)
-                return minutes * 60 + seconds
-            elif len(parts) == 3:  # HH:MM:SS
-                hours, minutes, seconds = map(int, parts)
-                return hours * 3600 + minutes * 60 + seconds
-            else:
-                return None
-        except (ValueError, AttributeError):
-            return None
 
-
-def extract_user_data(user_input: str) -> Dict:
+def extract_with_llm(user_text: str) -> dict:
     """
-    Convenience function to extract data from user input.
+    Wywołaj OpenAI GPT-4o-mini i zmierz przez Langfuse.
     
     Args:
-        user_input: Natural language input from user
+        user_text: Opis użytkownika w naturalnym języku
         
     Returns:
-        Dictionary with extracted and validated data
+        dict: {gender: str, age: int, time_5km: str}
     """
-    extractor = DataExtractor()
-    extracted = extractor.extract_data(user_input)
-    validation = extractor.validate_extracted_data(extracted)
+    # Pobierz klucz OpenAI
+    api_key = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY", "")
+    if not api_key:
+        st.error("Brak `OPENAI_API_KEY` – sprawdź zmienne środowiskowe.")
+        return {}
+
+    # ══════════════════════════════════════════════════════════
+    # LANGFUSE MONITORING
+    # ══════════════════════════════════════════════════════════
+    langfuse_client = None
+    trace = None
+    generation = None
     
-    return {
-        **extracted,
-        "validation": validation
-    }
+    if LANGFUSE_AVAILABLE:
+        try:
+            # Pobierz klucze Langfuse
+            lf_pub = os.getenv("LANGFUSE_PUBLIC_KEY") or st.secrets.get("LANGFUSE_PUBLIC_KEY", "")
+            lf_sec = os.getenv("LANGFUSE_SECRET_KEY") or st.secrets.get("LANGFUSE_SECRET_KEY", "")
+            lf_host = os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
+            
+            if lf_pub and lf_sec:
+                # Inicjalizuj klienta Langfuse
+                langfuse_client = Langfuse(
+                    public_key=lf_pub,
+                    secret_key=lf_sec,
+                    host=lf_host
+                )
+                
+                # Utwórz trace
+                trace = langfuse_client.trace(
+                    name="extract_runner_data",
+                    input={"user_text": user_text},
+                    metadata={"source": "streamlit_app"}
+                )
+                
+                # Utwórz generation (przed wywołaniem OpenAI)
+                generation = trace.generation(
+                    name="gpt-4o-mini-extraction",
+                    model="gpt-4o-mini",
+                    input=[
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user", "content": user_text}
+                    ],
+                    metadata={"temperature": 0.0, "max_tokens": 150}
+                )
+                
+        except Exception as e:
+            print(f"Langfuse initialization error: {e}")
+            # Kontynuuj bez Langfuse jeśli błąd
+
+    # ══════════════════════════════════════════════════════════
+    # OPENAI API CALL
+    # ══════════════════════════════════════════════════════════
+    try:
+        client = OpenAI(api_key=api_key)
+        
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_text},
+            ],
+            temperature=0.0,
+            response_format={"type": "json_object"},
+            max_tokens=150,
+        )
+        
+        # Parse response
+        raw = response.choices[0].message.content
+        result = json.loads(raw)
+        
+        # ══════════════════════════════════════════════════════════
+        # LANGFUSE - Zapisz wynik
+        # ══════════════════════════════════════════════════════════
+        if generation:
+            try:
+                generation.end(
+                    output=result,
+                    usage={
+                        "input": response.usage.prompt_tokens,
+                        "output": response.usage.completion_tokens,
+                        "total": response.usage.total_tokens
+                    },
+                    metadata={
+                        "extracted_fields": list(result.keys()),
+                        "missing_fields": [k for k, v in result.items() if v is None]
+                    }
+                )
+            except Exception as e:
+                print(f"Langfuse generation.end error: {e}")
+        
+        if langfuse_client:
+            try:
+                langfuse_client.flush()
+            except Exception as e:
+                print(f"Langfuse flush error: {e}")
+        
+        return result
+        
+    except Exception as e:
+        error_msg = f"OpenAI API error: {str(e)}"
+        st.error(error_msg)
+        
+        # Langfuse - zapisz błąd
+        if generation:
+            try:
+                generation.end(
+                    output={"error": error_msg},
+                    level="ERROR"
+                )
+            except Exception:
+                pass
+                
+        if langfuse_client:
+            try:
+                langfuse_client.flush()
+            except Exception:
+                pass
+        
+        return {}

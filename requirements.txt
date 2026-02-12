@@ -18,7 +18,7 @@ streamlit>=1.29.0
 openai>=1.6.0
 
 # Langfuse
-langfuse>=2.6.0
+langfuse>=2.50.0
 
 # Utilities
 python-dotenv>=1.0.0
