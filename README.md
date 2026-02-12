@@ -324,3 +324,4 @@ MIT License - zobacz plik LICENSE
 ---
 
 **Pytania?** Otwórz issue na GitHubie!
+No i git
