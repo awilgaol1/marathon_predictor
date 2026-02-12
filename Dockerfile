@@ -1,5 +1,4 @@
 FROM python:3.10-slim
-# force rebuild
 
 WORKDIR /app
 
@@ -9,19 +8,24 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy everything BEFORE installing dependencies (forces rebuild)
-COPY . .
+# Copy requirements first (for better Docker layer caching)
+COPY requirements.txt .
 
 # Install Python dependencies
-RUN pip install --no-cache-dir --upgrade pip
-RUN pip install --no-cache-dir -r requirements.txt
-RUN pip install langfuse
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
-# Create necessary directories
-RUN mkdir -p data models notebooks utils
+# Copy the rest of the application
+COPY . .
 
+# Expose Streamlit port
 EXPOSE 8501
 
+# Health check
 HEALTHCHECK CMD curl --fail http://localhost:8501/_stcore/health || exit 1
 
-CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+# Run the app
+CMD ["streamlit", "run", "app.py", \
+     "--server.port=8501", \
+     "--server.address=0.0.0.0", \
+     "--server.headless=true"]
