@@ -22,11 +22,11 @@ Z tekstu użytkownika wydobądź:
   - time_5km: czas w formacie "MM:SS" lub null
 
 Zasady:
-- Wiek możesz wyliczyć z roku urodzenia (odejmij od 2024)
-- Płeć wnioskuj z form gramatycznych / słów kluczowych
-- Czas może być podany jako "22 minuty", "22:30", "22 min 30 sek" – znormalizuj do MM:SS
-- Jeśli nie jesteś w stanie wydobyć wartości, użyj null
-- Odpowiedz TYLKO i WYŁĄCZNIE poprawnym JSON, bez żadnego komentarza
+• Wiek możesz wyliczyć z roku urodzenia (odejmij od 2024)
+• Płeć wnioskuj z form gramatycznych / słów kluczowych
+• Czas może być podany jako "22 minuty", "22:30", "22 min 30 sek" – znormalizuj do MM:SS
+• Jeśli nie jesteś w stanie wydobyć wartości, użyj null
+• Odpowiedz TYLKO i WYŁĄCZNIE poprawnym JSON, bez żadnego komentarza
 
 Przykłady:
   "30-letni mężczyzna, 5km w 22:30"
@@ -170,3 +170,34 @@ def extract_with_llm(user_text: str) -> dict:
                 pass
         
         return {}
+
+
+# ══════════════════════════════════════════════════════════
+# WRAPPER CLASS - dla kompatybilności wstecznej
+# ══════════════════════════════════════════════════════════
+
+class DataExtractor:
+    """
+    Wrapper class używający funkcji extract_with_llm.
+    Dla kompatybilności z kodem który używa klasy zamiast funkcji.
+    """
+    
+    def __init__(self):
+        """Inicjalizacja - nie robi nic, bo używamy statycznej funkcji."""
+        pass
+    
+    def extract(self, user_text: str) -> dict:
+        """
+        Wydobądź dane używając LLM.
+        
+        Args:
+            user_text: Opis użytkownika w naturalnym języku
+            
+        Returns:
+            dict: {gender: str, age: int, time_5km: str}
+        """
+        return extract_with_llm(user_text)
+    
+    def extract_data(self, user_text: str) -> dict:
+        """Alias dla extract()."""
+        return extract_with_llm(user_text)
