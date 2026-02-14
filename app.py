@@ -55,7 +55,7 @@ def load_model():
         try:
             from utils.spaces_handler import download_model
             local.parent.mkdir(exist_ok=True)
-            download_model("latest_halfmarathon_model.pkl", str(local))
+            download_model("halfmarathon_model.pkl", str(local))
         except Exception as e:
             st.error(f"Nie można pobrać modelu: {e}")
             return None
