@@ -201,3 +201,10 @@ class DataExtractor:
     def extract_data(self, user_text: str) -> dict:
         """Alias dla extract()."""
         return extract_with_llm(user_text)
+    # ══════════════════════════════════════════════════════════
+# ALIASY FUNKCJI - dla różnych nazw używanych w kodzie
+# ══════════════════════════════════════════════════════════
+
+# Różne nazwy tej samej funkcji używane w różnych miejscach kodu
+extract_user_data = extract_with_llm
+extract_data = extract_with_llm
