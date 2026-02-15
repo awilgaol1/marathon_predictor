@@ -97,39 +97,37 @@ Przykłady:
 
 def extract_with_llm(user_text: str) -> dict:
     """Wywołaj OpenAI i zmierz przez Langfuse."""
+    
+    # ── OpenAI API key ────────────────────────────
     api_key = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY", "")
     if not api_key:
         st.error("Brak `OPENAI_API_KEY` – sprawdź plik .env lub Streamlit Secrets.")
         return {}
 
-    # ── Langfuse trace (opcjonalnie) ──────────────────────────
-    trace = None
-    langfuse = None
+    # ── Langfuse (NOWE API v3) ────────────────────
+    lf_pub = os.getenv("LANGFUSE_PUBLIC_KEY") or st.secrets.get("LANGFUSE_PUBLIC_KEY", "")
+    lf_sec = os.getenv("LANGFUSE_SECRET_KEY") or st.secrets.get("LANGFUSE_SECRET_KEY", "")
+    
     try:
-        from langfuse import Langfuse
-        lf_pub = os.getenv("LANGFUSE_PUBLIC_KEY") or st.secrets.get("LANGFUSE_PUBLIC_KEY", "")
-        lf_sec = os.getenv("LANGFUSE_SECRET_KEY") or st.secrets.get("LANGFUSE_SECRET_KEY", "")
-        lf_host = os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
         if lf_pub and lf_sec:
-            langfuse = Langfuse(public_key=lf_pub, secret_key=lf_sec, host=lf_host)
-            trace = langfuse.trace(name="extract_runner_data", input=user_text)
-    except Exception:
-        pass
+            from langfuse.openai import openai
+            client = openai.OpenAI(api_key=api_key)
+            st.success("✅ Langfuse tracking aktywny!")
+        else:
+            from openai import OpenAI
+            client = OpenAI(api_key=api_key)
+            st.warning("⚠️ Brak kluczy Langfuse - tracking wyłączony")
+    except Exception as e:
+        from openai import OpenAI
+        client = OpenAI(api_key=api_key)
+        st.warning(f"⚠️ Langfuse niedostępny: {e}")
 
-    # ── OpenAI call ───────────────────────────────────────────
-    from openai import OpenAI
-    client = OpenAI(api_key=api_key)
-
-    generation = trace.generation(name="gpt-extraction", model="gpt-4o-mini", input=[
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user",   "content": user_text},
-    ]) if trace else None
-
+    # ── OpenAI call ───────────────────────────────
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user",   "content": user_text},
+            {"role": "user", "content": user_text},
         ],
         temperature=0.0,
         response_format={"type": "json_object"},
@@ -138,20 +136,9 @@ def extract_with_llm(user_text: str) -> dict:
 
     raw = response.choices[0].message.content
     result = json.loads(raw)
-
-    # Langfuse – zapisz wynik
-    if generation:
-        generation.end(output=result, usage={
-            "input":  response.usage.prompt_tokens,
-            "output": response.usage.completion_tokens,
-        })
-    if langfuse:
-        langfuse.flush()
-
+    
     return result
-
-
-# ──────────────────────────────────────────────
+ # ──────────────────────────────────────────────
 # PREDICTION
 # ──────────────────────────────────────────────
 def predict(pkg: dict, age: int, gender: str, time_5km_s: int) -> float:
